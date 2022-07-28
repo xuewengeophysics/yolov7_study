@@ -368,11 +368,14 @@ def train(hyp, opt, device, tb_writer=None):
                 #wx imgs.shape=torch.Size([BS, 3, 640, 640])
                 pred = model(imgs)  # forward
                 #wx 输出的特征图有3层，因此len(pred)=3，每个特征点有3个anchor box，85代表类别概率80+预测框置信度1+预测框位置4
-                #wx pred[0].shape=torch.Size([BS, 3, 80, 80, 85])
-                #wx pred[1].shape=torch.Size([BS, 3, 40, 40, 85])
-                #wx pred[2].shape=torch.Size([BS, 3, 20, 20, 85])
+                #wx pred[0].shape=torch.Size([BS, 3, 80, 80, 85]), 640/ 8,
+                #wx pred[1].shape=torch.Size([BS, 3, 40, 40, 85]), 640/16,
+                #wx pred[2].shape=torch.Size([BS, 3, 20, 20, 85]), 640/32,
                 #wx targets.shape=torch.Size([objNum, 6])，6代表(img_index, cls, xc_relative, yc_relative, w_relative, h_relative)
                 loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
+                #wx loss.shape=torch.Size([1]), loss = (lbox + lobj + lcls) * bs
+                #wx loss_items.shape=torch.Size([4]), (lbox, lobj, lcls, lbox + lobj + lcls)
+
                 ipdb.set_trace()
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
