@@ -1,4 +1,6 @@
 '''
+#wx Transfer learning
+python train.py --epochs 100 --cfg cfg/training/yolov7.yaml --weights yolov7_training.pt --name yolov7-coco128 --hyp data/hyp.scratch.custom.yaml
 python train.py --epochs 10 --cfg cfg/training/yolov7.yaml --weights yolov7.pt --name yolov7 --hyp data/hyp.scratch.p5.yaml
 python train.py --workers 8 --device 0 --batch-size 32 --data data/coco.yaml --img 640 640 --cfg cfg/training/yolov7.yaml --weights '' --name yolov7 --hyp data/hyp.scratch.p5.yaml
 '''
@@ -376,7 +378,7 @@ def train(hyp, opt, device, tb_writer=None):
                 #wx loss.shape=torch.Size([1]), loss = (lbox + lobj + lcls) * bs
                 #wx loss_items.shape=torch.Size([4]), (lbox, lobj, lcls, lbox + lobj + lcls)
 
-                ipdb.set_trace()
+                # ipdb.set_trace()
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
@@ -479,12 +481,12 @@ def train(hyp, opt, device, tb_writer=None):
                     torch.save(ckpt, best)
                 if (best_fitness == fi) and (epoch >= 200):
                     torch.save(ckpt, wdir / 'best_{:03d}.pt'.format(epoch))
-                if epoch == 0:
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                elif ((epoch+1) % 25) == 0:
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                elif epoch >= (epochs-5):
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+                # if epoch == 0:
+                #     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+                # elif ((epoch+1) % 25) == 0:
+                #     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+                # elif epoch >= (epochs-5):
+                #     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
                 if wandb_logger.wandb:
                     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
                         wandb_logger.log_model(
