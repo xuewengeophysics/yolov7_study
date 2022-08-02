@@ -373,7 +373,10 @@ def train(hyp, opt, device, tb_writer=None):
                 #wx pred[0].shape=torch.Size([BS, 3, 80, 80, 85]), 640/ 8,
                 #wx pred[1].shape=torch.Size([BS, 3, 40, 40, 85]), 640/16,
                 #wx pred[2].shape=torch.Size([BS, 3, 20, 20, 85]), 640/32,
-                #wx targets.shape=torch.Size([objNum, 6])，6代表(img_index, cls, xc_relative, yc_relative, w_relative, h_relative)
+                #wx targets是将图片转为imgsz大小后的bbox相对坐标, 例如[w, h]: [640, 480] -> [640, 640]
+                #wx targets.shape=torch.Size([obj_num, 6])，
+                #wx obj_num代表这个batch图片集中的objects数量，
+                #wx 6代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative)，image_idx_in_batch代表当前图片在这个batch中的index
                 loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
                 #wx loss.shape=torch.Size([1]), loss = (lbox + lobj + lcls) * bs
                 #wx loss_items.shape=torch.Size([4]), (lbox, lobj, lcls, lbox + lobj + lcls)

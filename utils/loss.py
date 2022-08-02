@@ -636,9 +636,19 @@ class ComputeLossOTA:
         loss = lbox + lobj + lcls
         return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
+    #wx 正负样本分配
     def build_targets(self, p, targets, imgs):
-        
+        #wx Build targets for compute_loss(), input targets(image_idx_in_batch,class,x,y,w,h)
+
         #indices, anch = self.find_positive(p, targets)
+        #wx indices代表这个正样本对应的(image_idx_in_batch, anchor_index, gj, gi)
+        #wx image_idx_in_batch代表当前图片在这个batch中的index
+        #wx anchor_index代表这个正样本对应的是第几个anchor
+        #wx gj, gi代表这个正样本对应的grid序号
+        #wx anch代表这个正样本对应的anchor
+        #wx type(indices)=<class 'list'>, len(indices)=3(3层特征图), type(indices[0])=<class 'tuple'>, len(indices[0])=4, 
+        #wx type(indices[0][0])=<class 'torch.Tensor'>, indices[0][0].shape=torch.Size([3*gt_num_featuremap])，gt_num_featuremap代表当前特征图的gt个数
+        #wx type(anch)=<class 'list'>, len(anch)=3(3层特征图), type(anch[0])=<class 'torch.Tensor'>, anch[0].shape=torch.Size([3*gt_num_featuremap, 2])
         indices, anch = self.find_3_positive(p, targets)
         #indices, anch = self.find_4_positive(p, targets)
         #indices, anch = self.find_5_positive(p, targets)
@@ -656,8 +666,11 @@ class ComputeLossOTA:
     
         #wx p[0].shape[0]代表batch_size
         for batch_idx in range(p[0].shape[0]):
-            #wx targets.shape=torch.Size([objNum, 6])，6代表(img_index, cls, xc_relative, yc_relative, w_relative, h_relative)
+            #wx targets.shape=torch.Size([objs_num, 6])，
+            #wx objs_num代表这个batch图片集中的objects数量，
+            #wx 6代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative)，image_idx_in_batch代表当前图片在这个batch中的index
             #wx targets[:, 0]代表训练batch中img的index
+
             b_idx = targets[:, 0]==batch_idx
             this_target = targets[b_idx]
             if this_target.shape[0] == 0:
@@ -797,54 +810,156 @@ class ComputeLossOTA:
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs           
 
     def find_3_positive(self, p, targets):
+        #wx p代表NN输出的3层特征图，targets代表物体的gt_box信息
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
+        ipdb.set_trace()
+        #wx na代表输出的特征图上每个特征点的anchor数量
+        #wx nt代表这个batch训练集中的objects数量objs_num
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
+        #wx indices代表什么？
+        #wx anch代表什么？
         indices, anch = [], []
+        #wx type(gain)=<class 'torch.Tensor'>，gain.shape=torch.Size([7])
         gain = torch.ones(7, device=targets.device).long()  # normalized to gridspace gain
+        #wx tensor([[0.], [1.], [2.]], device='cuda:0')
+        #wx torch.Size([3])->torch.Size([3, 1])->torch.Size([3, objs_num])
         ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
+        #wx targets.shape=torch.Size([objs_num, 6])，
+        #wx objs_num代表这个batch训练集中的objects数量
+        #wx 6代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative)，image_idx_in_batch代表当前图片在这个batch中的index
+        #wx 此时的targets是以batch训练集为单位来进行张量的组织的；
+        #wx targets.repeat(na, 1, 1).shape=torch.Size([3, objs_num, 6])
+        #wx ai[:, :, None].shape=torch.Size([3, objs_num, 1])
+        #wx anchors要和gt进行匹配，所以将targets依据anchors_num进行扩展；[objs_num, 6]->[na, objs_num, 6]
         targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
+        #wx targets.shape=torch.Size([3, objs_num, 7])
+        #wx 7代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative, anchor_idx)
+        #wx 3代表anchors_num，idx1=0时targets[0,:,6]=0表示对应第1个anchor，依此类推targets[1,:,6]=1、targets[2,:,6]=2
+        
 
         g = 0.5  # bias
+        #wx 分别对应中心点、左、上、右、下
         off = torch.tensor([[0, 0],
                             [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
                             # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
                             ], device=targets.device).float() * g  # offsets
 
+        """
+        anchors:
+            - [12,16, 19,36, 40,28]  # P3/8
+            - [36,75, 76,55, 72,146]  # P4/16
+            - [142,110, 192,243, 459,401]  # P5/32
+        P3的box下采样8倍、P4的box下采样16倍、P5的box下采样32倍
+        self.anchors.shape=torch.Size([3, 3, 2])，3层特征图
+        self.anchors
+            tensor([[[ 1.50000,  2.00000],
+                    [ 2.37500,  4.50000],
+                    [ 5.00000,  3.50000]],
+
+                    [[ 2.25000,  4.68750],
+                    [ 4.75000,  3.43750],
+                    [ 4.50000,  9.12500]],
+
+                    [[ 4.43750,  3.43750],
+                    [ 6.00000,  7.59375],
+                    [14.34375, 12.53125]]], device='cuda:0')
+        p代表NN输出的3层特征图(BS, anchor_num, h, w, c)
+        p[0].shape=torch.Size([BS, 3, 80, 80, 85]), 640/ 8,
+        p[1].shape=torch.Size([BS, 3, 40, 40, 85]), 640/16,
+        p[2].shape=torch.Size([BS, 3, 20, 20, 85]), 640/32,
+        """
+        #wx self.nl代表特征图的层数，self.nl=3
+        #wx 遍历每个特征图
         for i in range(self.nl):
+            #wx anchors记录当前特征图对应的anchor size
+            #wx anchors.shape=torch.Size([3, 2])，3代表当前特征图有3个anchor box，2代表w和h
             anchors = self.anchors[i]
+            #wx type(gain)=<class 'torch.Tensor'>，gain.shape=torch.Size([7])，1 * 7
+            #wx 当i=0时，对应p3特征图，gain[2:6]=tensor([80, 80, 80, 80], device='cuda:0')
+            #wx 当i=1时，对应p4特征图，gain[2:6]=tensor([40, 40, 40, 40], device='cuda:0')
+            #wx 当i=2时，对应p5特征图，gain[2:6]=tensor([20, 20, 20, 20], device='cuda:0')
             gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
 
             # Match targets to anchors
+            #wx targets是将图片转为imgsz大小后的bbox相对坐标, 例如[w, h]: [640, 480] -> [640, 640]
+            #wx targets.shape=torch.Size([3, objs_num, 7])
+            #wx 3代表anchors_num
+            #wx 7代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative, anchor_idx)
+            #wx 当i=0时，对应p3特征图，gain=tensor([ 1,  1, 80, 80, 80, 80,  1], device='cuda:0')
+            #wx 当i=1时，对应p4特征图，gain=tensor([ 1,  1, 40, 40, 40, 40,  1], device='cuda:0')
+            #wx 当i=2时，对应p5特征图，gain=tensor([ 1,  1, 20, 20, 20, 20,  1], device='cuda:0')
+            #wx t代表映射到这层特征图上的objs_box信息，它是由包含相对位置信息(0-1)的targets与包含特征图宽高信息的gain经过经过乘积处理得到的变量
+            #wx t.shape：torch.Size([3, objs_num, 7])
+            #wx 7代表(image_idx_in_batch, cls, xc, yc, w, h, anchor_idx)
+            #wx 3代表anchors_num，idx1=0时targets[0,:,6]=0表示对应第1个anchor，依此类推targets[1,:,6]=1、targets[2,:,6]=2
             t = targets * gain
+
+            #wx nt代表这个batch的训练集的objs_num
             if nt:
                 # Matches
+                #wx （1）anchors和gt匹配，看哪些gt是当前特征图的正样本
+                #wx anchors.shape=torch.Size([3, 2])，anchors[:, None].shape=torch.Size([3, 1, 2])
+                #wx t[:, :, 4:6]取到的是gt的宽高，t[..., 4:6].shape=torch.Size([3, objs_num, 2])
+                #wx r代表所有的gt的宽高与anchors的宽高计算比例，r.shape=torch.Size([3, objs_num, 2])
                 r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
+                #wx 默认self.hyp['anchor_t']=4，代表target宽高与anchor宽高比例都必须处于1/4到4区间内，才能与当前anchor匹配
+                #wx torch.max(r, 1. / r).shape=torch.Size([3, objs_num, 2])
+                #wx j.shape=torch.Size([3, 8])，3代表该特征图有3个纵横比不同的anchor
                 j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+                #wx t代表保留的gt，到这里后只保留了能与当前特征图的3个anchors匹配的gt，t.shape=torch.Size([gt_num_featuremap, 7])
+                #wx https://zhuanlan.zhihu.com/p/477598659
                 t = t[j]  # filter
 
                 # Offsets
+                #wx （2）将当前特征图的正样本分配给对应的grid
+                #wx t.shape=torch.Size([gt_num_featuremap, 7])，7代表(image_idx_in_batch, cls, xc, yc, w, h, anchor_idx)
+                #wx gxy代表以特征图左上角为原点，gt的xy坐标
                 gxy = t[:, 2:4]  # grid xy
+                #wx gxi代表以特征图右下角为原点，gt的xy坐标
                 gxi = gain[[2, 3]] - gxy  # inverse
+                #wx jklm就分别代表左、上、右、下是否能作为正样本，j和l，k和m是互斥的
+                #wx 将(x, y)和(x+1, y+1)两个特征点对应的特征图分为四个象限；具体实现采用g=0.5的方式
+                #wx 针对步骤（1）中保留的gt，计算该gt处于四个象限中的哪一个，并将邻近的两个特征点也作为正样本。
+                #wx 例如，若gt偏向于右下角的象限，就会将gt所在grid的右边、下边特征点也作为正样本。
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
+                #wx j.shape=torch.Size([gt_num_featuremap])，jklm都是
+                #wx j.shape=torch.Size([5, gt_num_featuremap])
+                #wx 保留的gt复制1份
                 j = torch.stack((torch.ones_like(j), j, k, l, m))
+                #wx 保留的gt复制1份，jklm各1份，一共复制5份，根据gt及左或右(互斥)、上或下(互斥)的True/False来保留最后的正样本
+                #wx t.shape=torch.Size([3*gt_num_featuremap, 2])；3代表gt、左或右(互斥)、上或下(互斥)这3个正样本
                 t = t.repeat((5, 1, 1))[j]
+                #wx torch.zeros_like(gxy).shape=torch.Size([6, 2])，torch.zeros_like(gxy)[None].shape=torch.Size([1, 6, 2])
+                #wx off.shape=torch.Size([5, 2])，off[:, None].shape=torch.Size([5, 1, 2])
+                #wx offsets.shape=torch.Size([3*gt_num_featuremap, 2])；3代表gt、左或右(互斥)、上或下(互斥)这3个正样本
+                #wx 这样能够分配更多的正样本，有助于训练加速，正负样本平衡
+                #wx offsets代表(左右, 上下)的偏移量
                 offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
             else:
                 t = targets[0]
                 offsets = 0
 
             # Define
+            #wx t.shape=torch.Size([3*gt_num_featuremap, 7])，7代表(image_idx_in_batch, cls, xc, yc, w, h, anchor_idx)
+            #wx b代表当前图片在这个batch中的index，b.shape=torch.Size([3*gt_num_featuremap])；
+            #wx c代表正样本的物体类别index，c.shape=torch.Size([3*gt_num_featuremap])；
             b, c = t[:, :2].long().T  # image, class
+            #wx gxy.shape=torch.Size([3*gt_num_featuremap, 2])
             gxy = t[:, 2:4]  # grid xy
+            #wx gwh.shape=torch.Size([3*gt_num_featuremap, 2])
             gwh = t[:, 4:6]  # grid wh
+            #wx gij.shape=torch.Size([3*gt_num_featuremap, 2])
             gij = (gxy - offsets).long()
+            #wx gi.shape=torch.Size([3*gt_num_featuremap])，gj.shape=torch.Size([3*gt_num_featuremap])
             gi, gj = gij.T  # grid xy indices
 
             # Append
+            #wx a代表这个正样本对应的是第几个anchor(anchor一共是3个，a在0/1/2中取值)；a.shape=torch.Size([18])
             a = t[:, 6].long()  # anchor indices
             indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            #wx anch代表这个正样本对应的anchor
             anch.append(anchors[a])  # anchors
 
         return indices, anch
