@@ -583,34 +583,74 @@ class ComputeLossOTA:
     def __call__(self, p, targets, imgs):  # predictions, targets, model   
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        #wx bs代表该正样本对应的图片在这个batch训练集中的index，type(bs)=<class 'list'>；len(bs)=3，3代表输出的特征图有3层；
+        #wx bs[0].shape=torch.Size([4])，bs[1].shape=torch.Size([26])，bs[2].shape=torch.Size([26])；bs[i]的size代表各层特征图的正样本个数
+        #wx as_代表该正样本对应的anchor的index，type(as_)=<class 'list'>；len(as_)=3，3代表3输出的特征图有3层；
+        #wx as_[0].shape=torch.Size([4])，as_[1].shape=torch.Size([26])，as_[2].shape=torch.Size([26])；as_[i]的size代表各层特征图的正样本个数
+        #wx gjs代表该正样本对应的特征图grid的H方向的index，type(gjs)=<class 'list'>；len(gjs)=3，3代表输出的特征图有3层；
+        #wx gjs[0].shape=torch.Size([4])，gjs[1].shape=torch.Size([26])，gjs[2].shape=torch.Size([26])；gjs[i]的size代表各层特征图的正样本个数
+        #wx gis代表该正样本对应的特征图grid的W方向的index，type(gis)=<class 'list'>；len(gis)=3，3代表输出的特征图有3层；
+        #wx gis[0].shape=torch.Size([4])，gis[1].shape=torch.Size([26])，gis[2].shape=torch.Size([26])；gis[i]的size代表各层特征图的正样本个数
+        #wx targets代表该正样本对应的gt信息，type(targets)=<class 'list'>；len(targets)=3，3代表输出的特征图有3层；
+        #wx targets[0].shape=torch.Size([4, 6])，targets[1].shape=torch.Size([26, 6])，targets[2].shape=torch.Size([26, 6])；
+        #wx 6代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative)，image_idx_in_batch代表当前图片在这个batch中的index
+        #wx anchors代表该正样本对应的anchor信息，type(anchors)=<class 'list'>；len(anchors)=3，3代表输出的特征图有3层；
+        #wx anchors[0].shape=torch.Size([4, 2])，anchors[1].shape=torch.Size([26, 2])，anchors[2].shape=torch.Size([26, 2])；2代表w、h；
         bs, as_, gjs, gis, targets, anchors = self.build_targets(p, targets, imgs)
+        #wx pre_gen_gains代表每层特征图的[H, W, H, W]，NN输出的特征图为3层，因此len(pre_gen_gains)=3；
+        #wx pre_gen_gains[0]=tensor([80, 80, 80, 80], device='cuda:0')
+        #wx pre_gen_gains[1]=tensor([40, 40, 40, 40], device='cuda:0')
+        #wx pre_gen_gains[2]=tensor([20, 20, 20, 20], device='cuda:0')
         pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p] 
     
-
+        # ipdb.set_trace()
         # Losses
+        #wx 遍历每层特征图(一共3层)
         for i, pi in enumerate(p):  # layer index, layer predictions
             b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]  # image, anchor, gridy, gridx
+            #wx 当i=0时代表P3特征图，tobj.shape=torch.Size([1, 3, 80, 80])
+            #wx 当i=1时代表P4特征图，tobj.shape=torch.Size([1, 3, 40, 40])
+            #wx 当i=2时代表P5特征图，tobj.shape=torch.Size([1, 3, 20, 20])
             tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
+            #wx b.shape[0]代表这层特征图的正样本个数
             n = b.shape[0]  # number of targets
             if n:
+                #wx pi代表NN输出的特征图；当1=0时，pi.shape=torch.Size([1, 3, 80, 80, 85])
+                #wx ps代表与正样本对应的NN预测结果，ps.shape=torch.Size([4, 85])，4代表4个正样本，85代表预测框位置4+预测框置信度1+类别概率80
                 ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
 
                 # Regression
                 grid = torch.stack([gi, gj], dim=1)
+                #wx pxy代表与正样本对应的NN预测结果，pxy.shape=torch.Size([4, 2])，4代表4个正样本，2代表x,y
                 pxy = ps[:, :2].sigmoid() * 2. - 0.5
                 #pxy = ps[:, :2].sigmoid() * 3. - 1.
+                #wx pwh代表与正样本对应的NN预测结果，pwh.shape=torch.Size([4, 2])，4代表4个正样本，2代表w,h
                 pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                #wx pbox代表与正样本对应的NN预测结果，pbox.shape=torch.Size([4, 4])，第一个4代表4个正样本，第二个4代表x,y,w,h
                 pbox = torch.cat((pxy, pwh), 1)  # predicted box
+                #wx targets代表该正样本对应的gt信息，type(targets)=<class 'list'>；len(targets)=3，3代表输出的特征图有3层；
+                #wx targets[0].shape=torch.Size([4, 6])，targets[1].shape=torch.Size([26, 6])，targets[2].shape=torch.Size([26, 6])；
+                #wx 4/26/26分别代表P3/P4/P5层特征图上的正样本个数
+                #wx 6代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative)，image_idx_in_batch代表当前图片在这个batch中的index
+                #wx selected_tbox代表与正样本对应gt的box信息
+                #wx selected_tbox.shape=torch.Size([4, 4])，第一个4代表4个正样本，第二个4代表x,y,w,h
                 selected_tbox = targets[i][:, 2:6] * pre_gen_gains[i]
                 selected_tbox[:, :2] -= grid
+                #wx pbox代表与正样本对应的NN预测结果，selected_tbox代表与正样本对应gt的box信息
+                #wx iou.shape=torch.Size([4])
                 iou = bbox_iou(pbox.T, selected_tbox, x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss
 
                 # Objectness
+                #wx tobj代表各个特征图的特征点的目标预测置信度
+                #wx 当i=0时代表P3特征图，tobj.shape=torch.Size([1, 3, 80, 80])
+                #wx 当i=1时代表P4特征图，tobj.shape=torch.Size([1, 3, 40, 40])
+                #wx 当i=2时代表P5特征图，tobj.shape=torch.Size([1, 3, 20, 20])
                 tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
 
                 # Classification
+                #wx selected_tcls代表与正样本对应gt的cls信息；selected_tcls.shape=torch.Size([4])
                 selected_tcls = targets[i][:, 1].long()
                 if self.nc > 1:  # cls loss (only if multiple classes)
                     t = torch.full_like(ps[:, 5:], self.cn, device=device)  # targets
@@ -639,7 +679,9 @@ class ComputeLossOTA:
     #wx 正负样本分配
     def build_targets(self, p, targets, imgs):
         #wx Build targets for compute_loss(), input targets(image_idx_in_batch,class,x,y,w,h)
-
+        ######################################
+        #wx 使用yolov5正负样本分配策略分配正样本
+        ######################################
         #indices, anch = self.find_positive(p, targets)
         #wx indices代表这个正样本对应的(image_idx_in_batch, anchor_index, gj, gi)
         #wx image_idx_in_batch代表当前图片在这个batch中的index
@@ -660,22 +702,26 @@ class ComputeLossOTA:
         matching_gis = [[] for pp in p]
         matching_targets = [[] for pp in p]
         matching_anchs = [[] for pp in p]
+        
 
         #wx len(p)代表特征图的层数，在这里为3    
         nl = len(p)    
     
+        ipdb.set_trace()
+        #wx 遍历这个batch训练集中的每张图像
         #wx p[0].shape[0]代表batch_size
         for batch_idx in range(p[0].shape[0]):
             #wx targets.shape=torch.Size([objs_num, 6])，
-            #wx objs_num代表这个batch图片集中的objects数量，
+            #wx objs_num代表这个batch训练集中的objects数量，
             #wx 6代表(image_idx_in_batch, cls, xc_relative, yc_relative, w_relative, h_relative)，image_idx_in_batch代表当前图片在这个batch中的index
-            #wx targets[:, 0]代表训练batch中img的index
-
+            #wx targets[:, 0]代表图像在这个batch训练集中的index
             b_idx = targets[:, 0]==batch_idx
             this_target = targets[b_idx]
+            #wx 如果这张图像没有目标
             if this_target.shape[0] == 0:
                 continue
-                
+
+            #wx 将gt的box信息从相对坐标(0,1)转换到实际的像素坐标系下      
             txywh = this_target[:, 2:6] * imgs[batch_idx].shape[1]
             txyxy = xywh2xyxy(txywh)
 
@@ -689,8 +735,12 @@ class ComputeLossOTA:
             all_gi = []
             all_anch = []
             
+            #wx 遍历每层特征图(一共3层)
             for i, pi in enumerate(p):
-                
+                #wx indices代表这个正样本对应的(image_idx_in_batch, anchor_index, gj, gi)
+                #wx image_idx_in_batch代表当前图片在这个batch中的index
+                #wx anchor_index代表这个正样本对应的是第几个anchor
+                #wx gj, gi代表这个正样本对应的grid序号                
                 b, a, gj, gi = indices[i]
                 idx = (b == batch_idx)
                 b, a, gj, gi = b[idx], a[idx], gj[idx], gi[idx]                
@@ -724,7 +774,7 @@ class ComputeLossOTA:
             all_gj = torch.cat(all_gj, dim=0)
             all_gi = torch.cat(all_gi, dim=0)
             all_anch = torch.cat(all_anch, dim=0)
-        
+
             pair_wise_iou = box_iou(txyxy, pxyxys)
 
             pair_wise_iou_loss = -torch.log(pair_wise_iou + 1e-8)
@@ -750,7 +800,8 @@ class ComputeLossOTA:
                torch.log(y/(1-y)) , gt_cls_per_image, reduction="none"
             ).sum(-1)
             del cls_preds_
-        
+
+            #wx 计算每个样本对每个GT的Reg+Cla loss（Loss aware）  
             cost = (
                 pair_wise_cls_loss
                 + 3.0 * pair_wise_iou_loss
@@ -809,10 +860,11 @@ class ComputeLossOTA:
 
         return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs           
 
+    #wx 使用yolov5正负样本分配策略分配正样本
     def find_3_positive(self, p, targets):
         #wx p代表NN输出的3层特征图，targets代表物体的gt_box信息
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
-        ipdb.set_trace()
+        # ipdb.set_trace()
         #wx na代表输出的特征图上每个特征点的anchor数量
         #wx nt代表这个batch训练集中的objects数量objs_num
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
